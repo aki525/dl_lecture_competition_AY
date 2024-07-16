@@ -11,6 +11,9 @@ import torch.nn as nn
 import torchvision
 from torchvision import transforms
 
+from transformers import AdamW, AutoModel, AutoTokenizer
+MODEL_NAME = 'bert-base-uncased'
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -92,6 +95,13 @@ class VQADataset(torch.utils.data.Dataset):
                     word = process_text(word)
                     if word not in self.answer2idx:
                         self.answer2idx[word] = len(self.answer2idx)
+            
+            # added
+            answer_corpus = pandas.read_csv("data_annotations_class_mapping.csv")
+            for answer in answer_corpus["answer"]:
+                if answer not in self.answer2idx:
+                    self.answer2idx[answer] = len(self.answer2idx)
+
             self.idx2answer = {v: k for k, v in self.answer2idx.items()}  # 逆変換用の辞書(answer)
 
     def update_dict(self, dataset):
@@ -130,13 +140,23 @@ class VQADataset(torch.utils.data.Dataset):
         """
         image = Image.open(f"{self.image_dir}/{self.df['image'][idx]}")
         image = self.transform(image)
-        question = np.zeros(len(self.idx2question) + 1)  # 未知語用の要素を追加
-        question_words = self.df["question"][idx].split(" ")
-        for word in question_words:
-            try:
-                question[self.question2idx[word]] = 1  # one-hot表現に変換
-            except KeyError:
-                question[-1] = 1  # 未知語
+
+        # added
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        model = AutoModel.from_pretrained(MODEL_NAME)
+        tokens = tokenizer(self.df["question"][idx],return_tensors='pt')
+        _, question = model(input_ids = tokens['input_ids'],
+                            token_type_ids = tokens['token_type_ids'],
+                            attention_mask = tokens['attention_mask'],
+                            return_dict=False)
+
+        # question = np.zeros(len(self.idx2question) + 1)  # 未知語用の要素を追加
+        # question_words = self.df["question"][idx].split(" ")
+        # for word in question_words:
+        #     try:
+        #         question[self.question2idx[word]] = 1  # one-hot表現に変換
+        #     except KeyError:
+        #         question[-1] = 1  # 未知語
 
         if self.answer:
             answers = [self.answer2idx[process_text(answer["answer"])] for answer in self.df["answers"][idx]]
@@ -375,7 +395,8 @@ def main():
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=2, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2, pin_memory=True)
 
-    model = VQAModel(vocab_size=len(train_dataset.question2idx)+1, n_answer=len(train_dataset.answer2idx)).to(device)
+    # model = VQAModel(vocab_size=len(train_dataset.question2idx)+1, n_answer=len(train_dataset.answer2idx)).to(device)
+    model = VQAModel(vocab_size=768, n_answer=len(train_dataset.answer2idx)).to(device)
 
     # optimizer / criterion
     num_epoch = 20
