@@ -13,6 +13,8 @@ from torchvision import transforms
 
 from transformers import AdamW, AutoModel, AutoTokenizer
 MODEL_NAME = 'bert-base-uncased'
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
 
 
 def set_seed(seed):
@@ -142,13 +144,14 @@ class VQADataset(torch.utils.data.Dataset):
         image = self.transform(image)
 
         # added
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        model = AutoModel.from_pretrained(MODEL_NAME)
+        # tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        # model = AutoModel.from_pretrained(MODEL_NAME)
         tokens = tokenizer(self.df["question"][idx],return_tensors='pt')
         _, question = model(input_ids = tokens['input_ids'],
                             token_type_ids = tokens['token_type_ids'],
                             attention_mask = tokens['attention_mask'],
                             return_dict=False)
+        question = question[0]
 
         # question = np.zeros(len(self.idx2question) + 1)  # 未知語用の要素を追加
         # question_words = self.df["question"][idx].split(" ")
@@ -323,6 +326,9 @@ class VQAModel(nn.Module):
         image_feature = self.resnet(image)  # 画像の特徴量
         question_feature = self.text_encoder(question)  # テキストの特徴量
 
+        # print(image_feature.shape)
+        # print(question_feature.shape)
+
         x = torch.cat([image_feature, question_feature], dim=1)
         x = self.fc(x)
 
@@ -392,14 +398,14 @@ def main():
     test_dataset = VQADataset(df_path="./data/valid.json", image_dir="./data/valid", transform=transform, answer=False)
     test_dataset.update_dict(train_dataset)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=2, pin_memory=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=0)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
 
     # model = VQAModel(vocab_size=len(train_dataset.question2idx)+1, n_answer=len(train_dataset.answer2idx)).to(device)
     model = VQAModel(vocab_size=768, n_answer=len(train_dataset.answer2idx)).to(device)
 
     # optimizer / criterion
-    num_epoch = 20
+    num_epoch = 10
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
 
@@ -416,7 +422,7 @@ def main():
     model.eval()
     submission = []
     for image, question in test_loader:
-        image, question = image.to(device, non_blocking=True), question.to(device, non_blocking=True)
+        image, question = image.to(device), question.to(device)
         pred = model(image, question)
         pred = pred.argmax(1).cpu().item()
         submission.append(pred)
